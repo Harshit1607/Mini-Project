@@ -8,6 +8,8 @@ Institution: Bharati Vidyapeeth College of Engineering
 
 This implementation uses Random Forest to classify sleep stages from accelerometer data
 Dataset: PhysioNet Sleep-Accel Database (https://physionet.org/content/sleep-accel/1.0.0/)
+
+UPDATED VERSION - Saves predictions for Step 2 analysis
 """
 
 import numpy as np
@@ -28,27 +30,37 @@ warnings.filterwarnings('ignore')
 EPOCH_DURATION = 30  # seconds (standard for sleep stage classification)
 SAMPLING_RATE = 50  # Hz (approximate from dataset)
 RANDOM_STATE = 42
+OUTPUT_DIR = './outputs'  # Cross-platform compatible output directory
 
 class SleepStageClassifier:
     """
     Complete pipeline for sleep stage classification using Random Forest
     """
     
-    def __init__(self, data_path='./sleep-accel-data/'):
+    def __init__(self, data_path='./sleep-accel-data/', output_dir='./outputs'):
         """
         Initialize the classifier
         
         Args:
             data_path: Path to the downloaded PhysioNet sleep-accel dataset
+            output_dir: Directory to save output files
         """
         self.data_path = data_path
+        self.output_dir = output_dir
         self.model = None
         self.scaler = StandardScaler()
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # FIXED: Added mappings for stages -1 and 4
         self.sleep_stage_mapping = {
+            -1: 'Unknown',
             0: 'Wake',
             1: 'N1',
             2: 'N2', 
             3: 'N3',
+            4: 'N4',  # Deep sleep (older classification system)
             5: 'REM'
         }
         
@@ -339,7 +351,9 @@ class SleepStageClassifier:
         # Classification report
         print("\nDetailed Classification Report:")
         print("-" * 60)
-        target_names = [self.sleep_stage_mapping[i] for i in sorted(y_test.unique())]
+        # FIXED: Get only the unique stages present in y_test and ensure they're in the mapping
+        unique_stages = sorted(y_test.unique())
+        target_names = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages]
         print(classification_report(y_test, predictions, 
                                    target_names=target_names,
                                    digits=4))
@@ -366,7 +380,8 @@ class SleepStageClassifier:
         
         # 1. Confusion Matrix
         cm = confusion_matrix(y_test, predictions)
-        stage_names = [self.sleep_stage_mapping[i] for i in sorted(y_test.unique())]
+        unique_stages = sorted(y_test.unique())
+        stage_names = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages]
         
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                    xticklabels=stage_names, yticklabels=stage_names,
@@ -393,7 +408,7 @@ class SleepStageClassifier:
             'True': y_test.value_counts().sort_index(),
             'Predicted': pd.Series(predictions).value_counts().sort_index()
         })
-        stage_dist.index = [self.sleep_stage_mapping[i] for i in stage_dist.index]
+        stage_dist.index = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in stage_dist.index]
         stage_dist.plot(kind='bar', ax=axes[1, 0], color=['#3498db', '#e74c3c'])
         axes[1, 0].set_title('Sleep Stage Distribution', fontsize=14, fontweight='bold')
         axes[1, 0].set_xlabel('Sleep Stage', fontsize=12)
@@ -403,13 +418,15 @@ class SleepStageClassifier:
         
         # 4. Per-class Accuracy
         from sklearn.metrics import precision_recall_fscore_support
-        precision, recall, f1, _ = precision_recall_fscore_support(y_test, predictions)
+        precision, recall, f1, _ = precision_recall_fscore_support(y_test, predictions, 
+                                                                     labels=unique_stages,
+                                                                     zero_division=0)
         
         metrics_df = pd.DataFrame({
             'Precision': precision,
             'Recall': recall,
             'F1-Score': f1
-        }, index=[self.sleep_stage_mapping[i] for i in sorted(y_test.unique())])
+        }, index=[self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages])
         
         metrics_df.plot(kind='bar', ax=axes[1, 1], color=['#2ecc71', '#f39c12', '#9b59b6'])
         axes[1, 1].set_title('Per-Class Performance Metrics', fontsize=14, fontweight='bold')
@@ -420,9 +437,11 @@ class SleepStageClassifier:
         axes[1, 1].set_ylim([0, 1.0])
         
         plt.tight_layout()
-        plt.savefig('/mnt/user-data/outputs/sleep_classification_results.png', 
-                   dpi=300, bbox_inches='tight')
-        print("Plots saved to outputs folder!")
+        
+        # FIXED: Use cross-platform compatible path
+        output_path = os.path.join(self.output_dir, 'sleep_classification_results.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Plots saved to: {os.path.abspath(output_path)}")
         
         return fig
     
@@ -448,9 +467,11 @@ class SleepStageClassifier:
         ax.plot(time_hours, sample_pred, linewidth=2, color='#2c3e50')
         ax.fill_between(time_hours, sample_pred, alpha=0.3, color='#3498db')
         
-        # Formatting
-        ax.set_yticks([0, 1, 2, 3, 5])
-        ax.set_yticklabels(['Wake', 'N1', 'N2', 'N3', 'REM'])
+        # Formatting - show all unique stages present
+        unique_stages_in_sample = sorted(np.unique(sample_pred))
+        ax.set_yticks(unique_stages_in_sample)
+        ax.set_yticklabels([self.sleep_stage_mapping.get(int(i), f'Stage_{i}') 
+                           for i in unique_stages_in_sample])
         ax.set_xlabel('Time (hours)', fontsize=12, fontweight='bold')
         ax.set_ylabel('Sleep Stage', fontsize=12, fontweight='bold')
         ax.set_title('Sample Hypnogram - Sleep Stage Progression', 
@@ -459,9 +480,11 @@ class SleepStageClassifier:
         ax.set_xlim([0, time_hours[-1]])
         
         plt.tight_layout()
-        plt.savefig('/mnt/user-data/outputs/sample_hypnogram.png', 
-                   dpi=300, bbox_inches='tight')
-        print("Hypnogram saved to outputs folder!")
+        
+        # FIXED: Use cross-platform compatible path
+        output_path = os.path.join(self.output_dir, 'sample_hypnogram.png')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Hypnogram saved to: {os.path.abspath(output_path)}")
         
         return fig
 
@@ -472,11 +495,16 @@ def main():
     """
     print("="*60)
     print("SLEEP STAGE CLASSIFICATION USING RANDOM FOREST")
-    print("SomnusGuard - Early Detection of Sleep Disorders")
+    print("SomnusGuard - Step 1: Sleep Stage Classification")
     print("="*60)
     
-    # Initialize classifier
-    classifier = SleepStageClassifier(data_path='./sleep-accel-data/')
+    # Initialize classifier with output directory
+    classifier = SleepStageClassifier(
+        data_path='./sleep-accel-data/',
+        output_dir=OUTPUT_DIR
+    )
+    
+    print(f"\nOutput directory: {os.path.abspath(OUTPUT_DIR)}")
     
     # STEP 1: Load and process all subject data
     print("\n" + "="*60)
@@ -525,16 +553,46 @@ def main():
     print(feature_importance.head(10).to_string(index=False))
     
     # Save feature importance
-    feature_importance.to_csv('/mnt/user-data/outputs/feature_importance.csv', index=False)
+    csv_path = os.path.join(OUTPUT_DIR, 'feature_importance.csv')
+    feature_importance.to_csv(csv_path, index=False)
+    print(f"\nFeature importance saved to: {os.path.abspath(csv_path)}")
+    
+    # ========================================================================
+    # SAVE PREDICTIONS FOR STEP 2
+    # ========================================================================
+    print("\n" + "="*60)
+    print("SAVING PREDICTIONS FOR STEP 2")
+    print("="*60)
+    
+    # Save predictions as numpy array
+    predictions_file = os.path.join(OUTPUT_DIR, 'predictions.npy')
+    np.save(predictions_file, predictions)
+    print(f"✓ Predictions saved to: {os.path.abspath(predictions_file)}")
+    
+    # Also save as CSV for easy viewing
+    predictions_csv = os.path.join(OUTPUT_DIR, 'predictions.csv')
+    pd.DataFrame({
+        'epoch': range(len(predictions)),
+        'sleep_stage': predictions,
+        'stage_name': [classifier.sleep_stage_mapping.get(int(s), f'Stage_{s}') 
+                       for s in predictions]
+    }).to_csv(predictions_csv, index=False)
+    print(f"✓ Human-readable predictions saved to: {os.path.abspath(predictions_csv)}")
     
     print("\n" + "="*60)
-    print("PIPELINE EXECUTION COMPLETED SUCCESSFULLY!")
+    print("STEP 1 COMPLETED SUCCESSFULLY!")
     print("="*60)
-    print("\nOutput files saved:")
+    print(f"\nAll output files saved to: {os.path.abspath(OUTPUT_DIR)}")
     print("  1. sleep_classification_results.png - Performance visualizations")
     print("  2. sample_hypnogram.png - Sleep stage progression")
     print("  3. feature_importance.csv - Feature importance rankings")
-    print("\nModel is ready for integration into SomnusGuard application!")
+    print("  4. predictions.npy - Hypnogram for Step 2 ← NEW!")
+    print("  5. predictions.csv - Human-readable hypnogram ← NEW!")
+    print("\n" + "="*60)
+    print("✅ READY FOR STEP 2!")
+    print("="*60)
+    print("\nNext: Run sleep paralysis risk analyzer")
+    print("  Command: python sleep_paralysis_risk_analyzer.py")
     print("="*60)
 
 
