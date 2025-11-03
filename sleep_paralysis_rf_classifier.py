@@ -9,7 +9,7 @@ Institution: Bharati Vidyapeeth College of Engineering
 This implementation uses Random Forest to classify sleep stages from accelerometer data
 Dataset: PhysioNet Sleep-Accel Database (https://physionet.org/content/sleep-accel/1.0.0/)
 
-UPDATED VERSION - Saves predictions for Step 2 analysis
+UPDATED VERSION - Compatible with Enhanced Risk Analyzer
 """
 
 import numpy as np
@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from scipy.signal import butter, filtfilt
+import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -30,11 +31,24 @@ warnings.filterwarnings('ignore')
 EPOCH_DURATION = 30  # seconds (standard for sleep stage classification)
 SAMPLING_RATE = 50  # Hz (approximate from dataset)
 RANDOM_STATE = 42
-OUTPUT_DIR = './outputs'  # Cross-platform compatible output directory
+OUTPUT_DIR = './outputs'
+
+# --- Label Mappings (Must match analyzer) ---
+LABEL_MAPPING = {
+    -1: 0, 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6
+}
+REVERSE_LABEL_MAPPING = {
+    0: -1, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5
+}
+SLEEP_STAGE_MAPPING = {
+    -1: 'Unknown', 0: 'Wake', 1: 'N1', 2: 'N2', 
+    3: 'N3', 4: 'N4', 5: 'REM'
+}
 
 class SleepStageClassifier:
     """
     Complete pipeline for sleep stage classification using Random Forest
+    Compatible with Enhanced Risk Analyzer
     """
     
     def __init__(self, data_path='./sleep-accel-data/', output_dir='./outputs'):
@@ -53,16 +67,7 @@ class SleepStageClassifier:
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # FIXED: Added mappings for stages -1 and 4
-        self.sleep_stage_mapping = {
-            -1: 'Unknown',
-            0: 'Wake',
-            1: 'N1',
-            2: 'N2', 
-            3: 'N3',
-            4: 'N4',  # Deep sleep (older classification system)
-            5: 'REM'
-        }
+        self.sleep_stage_mapping = SLEEP_STAGE_MAPPING
         
     def load_subject_data(self, subject_id):
         """
@@ -121,6 +126,7 @@ class SleepStageClassifier:
     def extract_epoch_features(self, epoch_data):
         """
         Extract time-domain and statistical features from 30-second epoch
+        MUST MATCH THE ANALYZER'S FEATURE EXTRACTION!
         
         Features extracted:
         - Mean, Std, Min, Max, Median
@@ -134,7 +140,7 @@ class SleepStageClassifier:
             epoch_data: Acceleration data for one epoch
             
         Returns:
-            Dictionary of features
+            Dictionary of features (25 features total)
         """
         features = {}
         
@@ -213,7 +219,7 @@ class SleepStageClassifier:
                 (accel_df['timestamp'] < current_time + EPOCH_DURATION)
             ]
             
-            # Get corresponding label (use label at epoch start)
+            # Get corresponding label
             epoch_label = labels_df[
                 (labels_df['timestamp'] >= current_time) &
                 (labels_df['timestamp'] < current_time + EPOCH_DURATION)
@@ -285,7 +291,7 @@ class SleepStageClassifier:
     
     def train_model(self, X_train, y_train):
         """
-        Train Random Forest classifier
+        Train Random Forest classifier with mapped labels
         
         Args:
             X_train: Training features
@@ -295,15 +301,18 @@ class SleepStageClassifier:
         print("TRAINING RANDOM FOREST MODEL")
         print("="*60)
         
+        # Map labels to 0-6 range for consistency with analyzer
+        y_train_mapped = y_train.map(LABEL_MAPPING)
+        
         # Initialize Random Forest with optimized hyperparameters
         self.model = RandomForestClassifier(
-            n_estimators=200,           # Number of trees
-            max_depth=20,                # Maximum depth of trees
-            min_samples_split=10,        # Minimum samples to split node
-            min_samples_leaf=4,          # Minimum samples in leaf
-            max_features='sqrt',         # Features to consider for split
+            n_estimators=200,
+            max_depth=20,
+            min_samples_split=10,
+            min_samples_leaf=4,
+            max_features='sqrt',
             random_state=RANDOM_STATE,
-            n_jobs=-1,                   # Use all CPU cores
+            n_jobs=-1,
             verbose=1
         )
         
@@ -312,13 +321,13 @@ class SleepStageClassifier:
         
         # Train model
         print("\nTraining in progress...")
-        self.model.fit(X_train_scaled, y_train)
+        self.model.fit(X_train_scaled, y_train_mapped)
         
         print("\nModel training completed!")
         
         # Cross-validation
         print("\nPerforming 5-fold cross-validation...")
-        cv_scores = cross_val_score(self.model, X_train_scaled, y_train, 
+        cv_scores = cross_val_score(self.model, X_train_scaled, y_train_mapped, 
                                     cv=5, scoring='accuracy', n_jobs=-1)
         print(f"Cross-validation scores: {cv_scores}")
         print(f"Mean CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
@@ -332,17 +341,23 @@ class SleepStageClassifier:
             y_test: Test labels
             
         Returns:
-            predictions: Model predictions
+            predictions: Model predictions (in original label space)
         """
         print("\n" + "="*60)
         print("MODEL EVALUATION")
         print("="*60)
         
+        # Map test labels
+        y_test_mapped = y_test.map(LABEL_MAPPING)
+        
         # Scale test features
         X_test_scaled = self.scaler.transform(X_test)
         
-        # Make predictions
-        predictions = self.model.predict(X_test_scaled)
+        # Make predictions (in mapped space)
+        predictions_mapped = self.model.predict(X_test_scaled)
+        
+        # Map back to original labels
+        predictions = np.vectorize(REVERSE_LABEL_MAPPING.get)(predictions_mapped)
         
         # Calculate accuracy
         accuracy = accuracy_score(y_test, predictions)
@@ -351,7 +366,6 @@ class SleepStageClassifier:
         # Classification report
         print("\nDetailed Classification Report:")
         print("-" * 60)
-        # FIXED: Get only the unique stages present in y_test and ensure they're in the mapping
         unique_stages = sorted(y_test.unique())
         target_names = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages]
         print(classification_report(y_test, predictions, 
@@ -438,7 +452,6 @@ class SleepStageClassifier:
         
         plt.tight_layout()
         
-        # FIXED: Use cross-platform compatible path
         output_path = os.path.join(self.output_dir, 'sleep_classification_results.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Plots saved to: {os.path.abspath(output_path)}")
@@ -467,7 +480,7 @@ class SleepStageClassifier:
         ax.plot(time_hours, sample_pred, linewidth=2, color='#2c3e50')
         ax.fill_between(time_hours, sample_pred, alpha=0.3, color='#3498db')
         
-        # Formatting - show all unique stages present
+        # Formatting
         unique_stages_in_sample = sorted(np.unique(sample_pred))
         ax.set_yticks(unique_stages_in_sample)
         ax.set_yticklabels([self.sleep_stage_mapping.get(int(i), f'Stage_{i}') 
@@ -481,12 +494,31 @@ class SleepStageClassifier:
         
         plt.tight_layout()
         
-        # FIXED: Use cross-platform compatible path
         output_path = os.path.join(self.output_dir, 'sample_hypnogram.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Hypnogram saved to: {os.path.abspath(output_path)}")
         
         return fig
+    
+    def save_model_and_scaler(self):
+        """
+        Save the trained model and scaler for use with the risk analyzer
+        """
+        print("\n" + "="*60)
+        print("SAVING MODEL AND SCALER")
+        print("="*60)
+        
+        # Save Random Forest model
+        model_path = os.path.join(self.output_dir, 'rf_sleep_model.joblib')
+        joblib.dump(self.model, model_path)
+        print(f"✓ Model saved to: {os.path.abspath(model_path)}")
+        
+        # Save scaler
+        scaler_path = os.path.join(self.output_dir, 'scaler.joblib')
+        joblib.dump(self.scaler, scaler_path)
+        print(f"✓ Scaler saved to: {os.path.abspath(scaler_path)}")
+        
+        return model_path, scaler_path
 
 
 def main():
@@ -495,10 +527,10 @@ def main():
     """
     print("="*60)
     print("SLEEP STAGE CLASSIFICATION USING RANDOM FOREST")
-    print("SomnusGuard - Step 1: Sleep Stage Classification")
+    print("SomnusGuard - Compatible with Enhanced Risk Analyzer")
     print("="*60)
     
-    # Initialize classifier with output directory
+    # Initialize classifier
     classifier = SleepStageClassifier(
         data_path='./sleep-accel-data/',
         output_dir=OUTPUT_DIR
@@ -513,7 +545,12 @@ def main():
     
     X, y = classifier.load_all_subjects()
     
-    # STEP 2: Split data into training and testing sets
+    # Verify we have 25 features (required by analyzer)
+    print(f"\n✓ Feature count: {X.shape[1]} (Required: 25)")
+    if X.shape[1] != 25:
+        print("⚠ WARNING: Feature count mismatch! Analyzer expects 25 features.")
+    
+    # STEP 2: Split data
     print("\n" + "="*60)
     print("STEP 2: TRAIN-TEST SPLIT")
     print("="*60)
@@ -525,7 +562,7 @@ def main():
     print(f"Training set size: {len(X_train)} epochs")
     print(f"Test set size: {len(X_test)} epochs")
     
-    # STEP 3: Train Random Forest model
+    # STEP 3: Train model
     classifier.train_model(X_train, y_train)
     
     # STEP 4: Evaluate model
@@ -539,7 +576,7 @@ def main():
     classifier.plot_results(X_test, y_test, predictions)
     classifier.generate_hypnogram_sample(predictions)
     
-    # STEP 6: Feature importance analysis
+    # STEP 6: Feature importance
     print("\n" + "="*60)
     print("STEP 6: FEATURE IMPORTANCE ANALYSIS")
     print("="*60)
@@ -552,48 +589,29 @@ def main():
     print("\nTop 10 Most Important Features:")
     print(feature_importance.head(10).to_string(index=False))
     
-    # Save feature importance
     csv_path = os.path.join(OUTPUT_DIR, 'feature_importance.csv')
     feature_importance.to_csv(csv_path, index=False)
     print(f"\nFeature importance saved to: {os.path.abspath(csv_path)}")
     
-    # ========================================================================
-    # SAVE PREDICTIONS FOR STEP 2
-    # ========================================================================
-    print("\n" + "="*60)
-    print("SAVING PREDICTIONS FOR STEP 2")
-    print("="*60)
-    
-    # Save predictions as numpy array
-    predictions_file = os.path.join(OUTPUT_DIR, 'predictions.npy')
-    np.save(predictions_file, predictions)
-    print(f"✓ Predictions saved to: {os.path.abspath(predictions_file)}")
-    
-    # Also save as CSV for easy viewing
-    predictions_csv = os.path.join(OUTPUT_DIR, 'predictions.csv')
-    pd.DataFrame({
-        'epoch': range(len(predictions)),
-        'sleep_stage': predictions,
-        'stage_name': [classifier.sleep_stage_mapping.get(int(s), f'Stage_{s}') 
-                       for s in predictions]
-    }).to_csv(predictions_csv, index=False)
-    print(f"✓ Human-readable predictions saved to: {os.path.abspath(predictions_csv)}")
+    # STEP 7: Save model and scaler for analyzer
+    classifier.save_model_and_scaler()
     
     print("\n" + "="*60)
-    print("STEP 1 COMPLETED SUCCESSFULLY!")
+    print("✅ TRAINING COMPLETED SUCCESSFULLY!")
     print("="*60)
     print(f"\nAll output files saved to: {os.path.abspath(OUTPUT_DIR)}")
-    print("  1. sleep_classification_results.png - Performance visualizations")
-    print("  2. sample_hypnogram.png - Sleep stage progression")
-    print("  3. feature_importance.csv - Feature importance rankings")
-    print("  4. predictions.npy - Hypnogram for Step 2 ← NEW!")
-    print("  5. predictions.csv - Human-readable hypnogram ← NEW!")
+    print("  1. sleep_classification_results.png")
+    print("  2. sample_hypnogram.png")
+    print("  3. feature_importance.csv")
+    print("  4. rf_sleep_model.joblib ← Model for analyzer")
+    print("  5. scaler.joblib ← Scaler for analyzer")
     print("\n" + "="*60)
-    print("✅ READY FOR STEP 2!")
+    print("⚠ IMPORTANT: Update the analyzer to load RF model")
     print("="*60)
-    print("\nNext: Run sleep paralysis risk analyzer")
-    print("  Command: python sleep_paralysis_risk_analyzer.py")
-    print("="*60)
+    print("\nThe analyzer needs to be modified to use:")
+    print("  model = joblib.load('rf_sleep_model.joblib')")
+    print("  predictions = model.predict(X_scaled)  # No sequences needed")
+    print("\n" + "="*60)
 
 
 if __name__ == "__main__":
