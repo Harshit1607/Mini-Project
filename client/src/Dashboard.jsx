@@ -269,24 +269,6 @@ const OverviewTab = ({ statistics, allSubjects, totalUniqueSubjects }) => {
           icon={Users}
           gradient="from-blue-500 to-blue-600"
         />
-        <StatCard
-          title="Mean Accuracy"
-          value={`${statistics.overall_stats.mean_accuracy.toFixed(1)}%`}
-          icon={TrendingUp}
-          gradient="from-emerald-500 to-green-600"
-        />
-        <StatCard
-          title="High Risk Subjects"
-          value={statistics.overall_stats.high_risk_count}
-          icon={AlertCircle}
-          gradient="from-red-500 to-rose-600"
-        />
-        <StatCard
-          title="Mean Risk Score"
-          value={statistics.overall_stats.mean_risk_score.toFixed(1)}
-          icon={Activity}
-          gradient="from-purple-500 to-indigo-600"
-        />
       </div>
 
       {/* Model Summary Cards */}
@@ -377,26 +359,10 @@ const SubjectsTab = ({ subjects, selectedModel, setSelectedModel, modelCompariso
   const [sortConfig, setSortConfig] = useState({ key: 'risk_score', direction: 'desc' });
   const [filterRisk, setFilterRisk] = useState('ALL');
 
-  // --- START OF UNIQUE SUBJECT ID PROCESSING ---
-  let processedSubjects = [];
-
-  if (selectedModel === 'all') {
-    // 1. Group all entries by subject_id
-    const subjectMap = new Map();
-    subjects.forEach(s => {
-      if (!subjectMap.has(s.subject_id)) {
-        // When 'all' models are selected, default to the first entry found for that ID
-        subjectMap.set(s.subject_id, s);
-      }
-    });
-    // This ensures only 31 rows are displayed in 'All Models' view
-    processedSubjects = Array.from(subjectMap.values()); 
-
-  } else {
-    // 2. If a specific model is selected (e.g., 'rf', 'lstm'), the input 'subjects' already contains only 31 entries for that model.
-    processedSubjects = subjects;
-  }
-  // --- END OF UNIQUE SUBJECT ID PROCESSING ---
+  // --- SHOW ALL 93 ENTRIES (31 subjects × 3 models) ---
+  // No consolidation - show all subject-model combinations
+  let processedSubjects = subjects;
+  // --- END OF PROCESSING ---
   
 
   // Filter and sort the PROCESSED list
@@ -505,21 +471,15 @@ const SubjectsTab = ({ subjects, selectedModel, setSelectedModel, modelCompariso
               <tr key={idx} className="hover:bg-blue-50 transition-colors">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">{subject.subject_id}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  {selectedModel === 'all' ? (
-                      <span className="px-2 py-1 text-xs font-bold text-gray-600">
-                          Consolidated
-                      </span>
-                  ) : (
-                      <span 
-                          className="px-2 py-1 text-xs font-bold rounded-lg"
-                          style={{ 
-                            backgroundColor: modelComparison.find(m => m.model_key === subject.model)?.color + '20',
-                            color: modelComparison.find(m => m.model_key === subject.model)?.color
-                          }}
-                      >
-                          {subject.model.toUpperCase()}
-                      </span>
-                  )}
+                  <span
+                      className="px-2 py-1 text-xs font-bold rounded-lg"
+                      style={{
+                        backgroundColor: modelComparison.find(m => m.model_key === subject.model)?.color + '20',
+                        color: modelComparison.find(m => m.model_key === subject.model)?.color
+                      }}
+                  >
+                      {subject.model.toUpperCase()}
+                  </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-emerald-600">{subject.accuracy.toFixed(1)}%</td>
                 <td className="px-6 py-4 whitespace-nowrap">
