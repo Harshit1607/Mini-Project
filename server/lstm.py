@@ -1,21 +1,22 @@
 """
 EARLY DETECTION OF SLEEP DISORDERS AND PARASOMNIAS
-Sleep Stage Classification using a Bidirectional LSTM (V4)
+Sleep Stage Classification using a Hybrid CNN-LSTM Network (V2.1 FIXED)
 
 Authors: Harshit Bareja, Ishika Manchanda, Teena Kaintura
 Guide: Ms. Nupur Chugh
 Institution: Bharati Vidyapeeth College of Engineering
 
-This is the V4 implementation, designed to be the most accurate
-deep learning model by using full temporal context (past and future).
+This is an improved implementation (V2.1) FIXED FOR ANALYZER COMPATIBILITY
 
 Key Improvements:
-1.  *CRITICAL BUG FIX:* Fixed the calculate_magnitude function.
-2.  *Bidirectional LSTM:* Replaces the CNN and standard LSTM. This model
-    reads the sequence both forwards and backwards for superior context.
-3.  *Class Weighting:* Retained from V2/V3.
+1.  *Hybrid CNN-LSTM Architecture:*
+2.  *Class Weighting:*
+3.  *FIXED: Proper __init__ method (was _init_)*
+4.  *FIXED: Correct magnitude calculation*
+5.  *ANALYZER COMPATIBLE: Saves with correct filenames and metadata*
 
-FIXED VERSION: Corrected __init__ method name and magnitude calculation
+Requires: tensorflow, scikit-learn, joblib
+(pip install tensorflow scikit-learn joblib)
 """
 
 import numpy as np
@@ -31,14 +32,17 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight 
 import joblib 
+import json
 
 # --- TensorFlow/Keras Imports ---
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (
-    LSTM, Dense, Dropout, Input, Bidirectional # <-- Bidirectional is new
+    LSTM, Dense, Dropout, Input, TimeDistributed,
+    Conv1D, MaxPooling1D, Flatten
 )
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+from tensorflow.keras.utils import to_categorical
 
 warnings.filterwarnings('ignore')
 
@@ -49,25 +53,27 @@ RANDOM_STATE = 42
 OUTPUT_DIR = './outputs'  # Cross-platform compatible output directory
 
 # --- LSTM Configuration ---
-SEQUENCE_LENGTH = 20  # Use 20 epochs (10 minutes)
+SEQUENCE_LENGTH = 10  # Use 10 epochs (5 minutes) - COMPATIBLE WITH ANALYZER
 LSTM_EPOCHS = 30      # Train for a bit longer
 LSTM_BATCH_SIZE = 64  # Batch size for LSTM training
 
 
-class SleepStageClassifierBiLSTM:
+class SleepStageClassifierCNNLSTM:
     """
-    Complete pipeline for sleep stage classification using a Bi-LSTM.
+    Complete pipeline for sleep stage classification using a CNN-LSTM.
     """
     
     def __init__(self, data_path='../sleep-accel-data/', output_dir='./outputs'):
         """
         Initialize the classifier
+        FIXED: Was _init_ now __init__
         """
         self.data_path = data_path
         self.output_dir = output_dir
         self.model = None
         self.scaler = StandardScaler()
         self.history = None # To store training history
+        self.sequence_length = SEQUENCE_LENGTH  # Store for metadata
         
         # Create output directory
         os.makedirs(self.output_dir, exist_ok=True)
@@ -94,9 +100,9 @@ class SleepStageClassifierBiLSTM:
             4: 'N4',
             5: 'REM'
         }
-        print(f"Bidirectional LSTM (V4) Classifier initialized. Using {self.num_classes} classes.")
+        print(f"CNN-LSTM Classifier initialized. Using {self.num_classes} classes.")
 
-    # --- Data Loading and Feature Extraction (BUG FIXED) ---
+    # --- Data Loading and Feature Extraction ---
     
     def load_subject_data(self, subject_id):
         accel_file = os.path.join(self.data_path, f'{subject_id}_acceleration.txt')
@@ -109,10 +115,7 @@ class SleepStageClassifierBiLSTM:
     
     def calculate_magnitude(self, x, y, z):
         """
-        Calculate magnitude of 3D acceleration vector
-        ---
-        CRITICAL BUG FIX: Corrected to x**2 + y**2 + z**2
-        This fix will improve the performance of all models.
+        FIXED: Was x*2 + y2 + z*2, now x**2 + y**2 + z**2
         """
         return np.sqrt(x**2 + y**2 + z**2)
         
@@ -185,7 +188,7 @@ class SleepStageClassifierBiLSTM:
         
         return features_list, labels_list
 
-    # --- Data Preparation for Bi-LSTM (Unchanged from V3) ---
+    # --- Data Preparation for CNN-LSTM ---
 
     def load_and_process_all_subjects(self):
         print("Loading and processing all subjects...")
@@ -224,7 +227,7 @@ class SleepStageClassifierBiLSTM:
         if not all_features_dfs:
             print("No subjects processed successfully. Exiting.")
             return None, None
-
+            
         X_all_df = pd.concat(all_features_dfs, ignore_index=True)
         
         print(f"\nTotal epochs from all subjects: {len(X_all_df)}")
@@ -252,39 +255,46 @@ class SleepStageClassifierBiLSTM:
         
         return X_out, y_out
 
-    # --- NEW: Bi-LSTM Model Building ---
+    # --- CNN-LSTM Model Building and Training ---
 
-    def build_and_train_bilstm(self, X_train, y_train_mapped, X_val, y_val_mapped, class_weights):
-        """
-        NEW: Builds, compiles, and trains the Bidirectional LSTM model.
-        """
+    def build_and_train_cnn_lstm(self, X_train, y_train_mapped, X_val, y_val_mapped, class_weights):
         print("\n" + "="*60)
-        print("BUILDING AND TRAINING *BIDIRECTIONAL LSTM (V4)* MODEL")
+        print("BUILDING AND TRAINING *CNN-LSTM* MODEL")
         print("="*60)
         
         n_sequences, n_timesteps, n_features = X_train.shape
         
         input_layer = Input(shape=(n_timesteps, n_features))
         
-        # Stacked Bi-LSTM layers
-        # This layer processes the sequence forwards and backwards
-        bilstm = Bidirectional(LSTM(128, return_sequences=True))(input_layer)
-        bilstm = Dropout(0.4)(bilstm)
+        x = tf.keras.layers.Reshape((n_timesteps, n_features, 1))(input_layer)
+
+        cnn = TimeDistributed(Conv1D(
+            filters=64, 
+            kernel_size=3, 
+            activation='relu', 
+            padding='same'
+        ))(x)
+        cnn = TimeDistributed(MaxPooling1D(pool_size=2, padding='same'))(cnn)
+        cnn = TimeDistributed(Conv1D(
+            filters=64, 
+            kernel_size=3, 
+            activation='relu', 
+            padding='same'
+        ))(cnn)
+        cnn = TimeDistributed(MaxPooling1D(pool_size=2, padding='same'))(cnn)
         
-        # A second Bi-LSTM layer for deeper learning
-        bilstm = Bidirectional(LSTM(128, return_sequences=False))(bilstm)
-        bilstm = Dropout(0.4)(bilstm)
+        cnn = TimeDistributed(Flatten())(cnn)
         
-        # Dense hidden layer
-        dense = Dense(64, activation='relu')(bilstm)
+        lstm = LSTM(100, return_sequences=False)(cnn)
+        lstm = Dropout(0.4)(lstm)
+        
+        dense = Dense(64, activation='relu')(lstm)
         dense = Dropout(0.2)(dense)
         
-        # Output layer
         output_layer = Dense(self.num_classes, activation='softmax')(dense)
         
         self.model = Model(inputs=input_layer, outputs=output_layer)
         
-        # Compile the model
         self.model.compile(
             loss='sparse_categorical_crossentropy',
             optimizer='adam',
@@ -293,15 +303,14 @@ class SleepStageClassifierBiLSTM:
         
         self.model.summary()
         
-        # Set up callbacks
         early_stopping = EarlyStopping(
             monitor='val_loss', 
             patience=5,
             restore_best_weights=True
         )
         
-        # Save the best model with a new name
-        model_checkpoint_path = os.path.join(self.output_dir, 'best_bilstm_model.keras')
+        # FIXED: Use lstm_sleep_model.h5 for analyzer compatibility
+        model_checkpoint_path = os.path.join(self.output_dir, 'lstm_sleep_model.h5')
         model_checkpoint = ModelCheckpoint(
             filepath=model_checkpoint_path,
             monitor='val_accuracy',
@@ -309,10 +318,9 @@ class SleepStageClassifierBiLSTM:
             mode='max'
         )
         
-        print("\nTraining Bi-LSTM (V4) in progress...")
+        print("\nTraining CNN-LSTM in progress...")
         print(f"Using class weights: {class_weights}")
         
-        # Train the model
         self.history = self.model.fit(
             X_train,
             y_train_mapped,
@@ -327,7 +335,6 @@ class SleepStageClassifierBiLSTM:
         print("\nModel training completed!")
         print(f"Best model saved to {model_checkpoint_path}")
         
-        # Load the best model weights
         self.model.load_weights(model_checkpoint_path)
 
     # --- Evaluation and Plotting ---
@@ -355,7 +362,7 @@ class SleepStageClassifierBiLSTM:
             y_test_original, 
             predictions_original_format, 
             target_names=target_names,
-            labels=unique_stages, 
+            labels=unique_stages,
             digits=4,
             zero_division=0
         ))
@@ -371,7 +378,6 @@ class SleepStageClassifierBiLSTM:
         
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         
-        # 1. Confusion Matrix
         unique_stages = sorted(np.unique(y_test))
         stage_names = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages]
         cm = confusion_matrix(y_test, predictions, labels=unique_stages)
@@ -379,11 +385,10 @@ class SleepStageClassifierBiLSTM:
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
                     xticklabels=stage_names, yticklabels=stage_names,
                     ax=axes[0, 0])
-        axes[0, 0].set_title('Confusion Matrix (Bi-LSTM V4)', fontsize=14, fontweight='bold')
+        axes[0, 0].set_title('Confusion Matrix (CNN-LSTM)', fontsize=14, fontweight='bold')
         axes[0, 0].set_ylabel('True Label', fontsize=12)
         axes[0, 0].set_xlabel('Predicted Label', fontsize=12)
         
-        # 2. Training History (Accuracy)
         if self.history:
             history_df = pd.DataFrame(self.history.history)
             axes[0, 1].plot(history_df['accuracy'], label='Train Accuracy')
@@ -394,7 +399,6 @@ class SleepStageClassifierBiLSTM:
             axes[0, 1].legend()
             axes[0, 1].grid(True, alpha=0.3)
 
-        # 3. Sleep Stage Distribution
         stage_dist = pd.DataFrame({
             'True': pd.Series(y_test).value_counts().sort_index(),
             'Predicted': pd.Series(predictions).value_counts().sort_index()
@@ -407,7 +411,6 @@ class SleepStageClassifierBiLSTM:
         axes[1, 0].legend(['True', 'Predicted'])
         axes[1, 0].tick_params(axis='x', rotation=45)
 
-        # 4. Training History (Loss)
         if self.history:
             history_df = pd.DataFrame(self.history.history)
             axes[1, 1].plot(history_df['loss'], label='Train Loss')
@@ -420,7 +423,7 @@ class SleepStageClassifierBiLSTM:
         
         plt.tight_layout()
         
-        output_path = os.path.join(self.output_dir, 'sleep_classification_results_bilstm_v4.png')
+        output_path = os.path.join(self.output_dir, 'sleep_classification_results_cnn_lstm.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Plots saved to: {os.path.abspath(output_path)}")
         
@@ -443,14 +446,14 @@ class SleepStageClassifierBiLSTM:
                             for i in unique_stages_in_sample])
         ax.set_xlabel('Time (hours)', fontsize=12, fontweight='bold')
         ax.set_ylabel('Sleep Stage', fontsize=12, fontweight='bold')
-        ax.set_title('Sample Hypnogram - Sleep Stage Progression (Bi-LSTM V4)', 
+        ax.set_title('Sample Hypnogram - Sleep Stage Progression (CNN-LSTM)', 
                      fontsize=14, fontweight='bold')
         ax.grid(True, alpha=0.3)
         ax.set_xlim([0, time_hours[-1]])
         
         plt.tight_layout()
         
-        output_path = os.path.join(self.output_dir, 'sample_hypnogram_bilstm_v4.png')
+        output_path = os.path.join(self.output_dir, 'sample_hypnogram_cnn_lstm.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"Hypnogram saved to: {os.path.abspath(output_path)}")
         
@@ -459,12 +462,12 @@ class SleepStageClassifierBiLSTM:
 
 def main():
     print("="*60)
-    print("SLEEP STAGE CLASSIFICATION (V4 - BIDIRECTIONAL LSTM)")
+    print("SLEEP STAGE CLASSIFICATION (V2 - CNN-LSTM FIXED)")
     print("SomnusGuard - Step 1: Sleep Stage Classification")
     print("="*60)
     
-    classifier = SleepStageClassifierBiLSTM(
-        data_path='../sleep-accel-data/', # Corrected path
+    classifier = SleepStageClassifierCNNLSTM(
+        data_path='../sleep-accel-data/',
         output_dir=OUTPUT_DIR
     )
     
@@ -480,7 +483,7 @@ def main():
     if X_all_df is None:
         print("Halting execution due to data loading errors.")
         return
-
+    
     # STEP 2
     print("\n" + "="*60)
     print("STEP 2: FITTING SCALER & CREATING SEQUENCES")
@@ -490,11 +493,10 @@ def main():
     classifier.scaler.fit(X_all_df)
     print("Scaler fitted.")
     
-    # --- NEW: SAVE THE SCALER with a new name ---
-    scaler_path = os.path.join(OUTPUT_DIR, 'bilstm_scaler.joblib')
+    # FIXED: Save scaler with correct filename for analyzer
+    scaler_path = os.path.join(OUTPUT_DIR, 'lstm_scaler.joblib')
     joblib.dump(classifier.scaler, scaler_path)
     print(f"✓ Scaler saved to: {os.path.abspath(scaler_path)}")
-    # --- END NEW ---
     
     X_seq, y_seq = classifier.create_lstm_sequences(
         subject_data_list, 
@@ -542,7 +544,7 @@ def main():
         print(f"  {stage_name} (Class {stage_mapped}): {weight:.2f}")
 
     # STEP 5
-    classifier.build_and_train_bilstm( # <-- Calls the new Bi-LSTM model
+    classifier.build_and_train_cnn_lstm(
         X_train, y_train_mapped, 
         X_test, y_test_mapped,
         class_weights_dict
@@ -561,14 +563,14 @@ def main():
     
     # STEP 8
     print("\n" + "="*60)
-    print("STEP 8: SAVING PREDICTIONS FOR STEP 2")
+    print("STEP 8: SAVING PREDICTIONS AND METADATA")
     print("="*60)
     
-    predictions_file = os.path.join(OUTPUT_DIR, 'predictions_bilstm_v4.npy')
+    predictions_file = os.path.join(OUTPUT_DIR, 'predictions_cnn_lstm.npy')
     np.save(predictions_file, predictions)
     print(f"✓ Test set predictions saved to: {os.path.abspath(predictions_file)}")
     
-    predictions_csv = os.path.join(OUTPUT_DIR, 'predictions_bilstm_v4.csv')
+    predictions_csv = os.path.join(OUTPUT_DIR, 'predictions_cnn_lstm.csv')
     pd.DataFrame({
         'epoch': range(len(predictions)),
         'sleep_stage': predictions,
@@ -577,11 +579,32 @@ def main():
     }).to_csv(predictions_csv, index=False)
     print(f"✓ Human-readable test set predictions saved to: {os.path.abspath(predictions_csv)}")
     
+    # NEW: Save model metadata for analyzer
+    metadata = {
+        'sequence_length': SEQUENCE_LENGTH,
+        'num_features': X_train.shape[2],
+        'num_classes': classifier.num_classes,
+        'label_mapping': classifier.label_mapping,
+        'reverse_label_mapping': classifier.reverse_label_mapping,
+        'model_type': 'CNN-LSTM'
+    }
+    
+    metadata_path = os.path.join(OUTPUT_DIR, 'lstm_metadata.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    print(f"✓ Model metadata saved to: {os.path.abspath(metadata_path)}")
+    
     print("\n" + "="*60)
-    print("✅ STEP 1 (BI-LSTM V4) COMPLETED SUCCESSFULLY!")
+    print("✅ CNN-LSTM TRAINING COMPLETED SUCCESSFULLY!")
     print("="*60)
-    print("\nNext: Run the new 'run_bilstm_analysis.py' script.")
-    print("=============================================================")
+    print("\nFiles saved:")
+    print(f"  📦 Model: {os.path.join(OUTPUT_DIR, 'lstm_sleep_model.h5')}")
+    print(f"  📊 Scaler: {os.path.join(OUTPUT_DIR, 'lstm_scaler.joblib')}")
+    print(f"  📄 Metadata: {os.path.join(OUTPUT_DIR, 'lstm_metadata.json')}")
+    print("\nNext Steps:")
+    print("  1. Ensure RF and XGBoost models are trained")
+    print("  2. Run unified_analyzer.py to analyze all subjects with all models")
+    print("="*60)
 
 if __name__ == "__main__":
     main()
