@@ -1,0 +1,4 @@
+model_key,model_name,color,subjects_analyzed,mean_accuracy,std_accuracy,high_risk_count,mean_risk_score
+rf,Random Forest,#3498db,31,87.21,3.33,6,32.10
+lstm,LSTM,#e74c3c,31,77.75,5.45,1,17.58
+xgboost,XGBoost,#2ecc71,31,95.35,1.41,2,24.84
