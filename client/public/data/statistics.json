@@ -1,0 +1,51 @@
+{
+  "total_subjects": 31,
+  "models_analyzed": [
+    "rf",
+    "lstm",
+    "xgboost"
+  ],
+  "analysis_date": "2025-11-05 11:17:33",
+  "overall_stats": {
+    "mean_accuracy": 86.77042360225582,
+    "mean_risk_score": 24.838709677419356,
+    "high_risk_count": 9,
+    "risk_distribution": {
+      "MODERATE": 50,
+      "LOW": 34,
+      "HIGH": 9
+    }
+  },
+  "by_model": [
+    {
+      "model_key": "rf",
+      "model_name": "Random Forest",
+      "color": "#3498db",
+      "subjects_analyzed": 31,
+      "mean_accuracy": 87.20729890301733,
+      "std_accuracy": 3.3288215890614015,
+      "high_risk_count": 6,
+      "mean_risk_score": 32.096774193548384
+    },
+    {
+      "model_key": "lstm",
+      "model_name": "LSTM",
+      "color": "#e74c3c",
+      "subjects_analyzed": 31,
+      "mean_accuracy": 77.75449006186426,
+      "std_accuracy": 5.447417346519993,
+      "high_risk_count": 1,
+      "mean_risk_score": 17.580645161290324
+    },
+    {
+      "model_key": "xgboost",
+      "model_name": "XGBoost",
+      "color": "#2ecc71",
+      "subjects_analyzed": 31,
+      "mean_accuracy": 95.34948184188585,
+      "std_accuracy": 1.4053823107867207,
+      "high_risk_count": 2,
+      "mean_risk_score": 24.838709677419356
+    }
+  ]
+}

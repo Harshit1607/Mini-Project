@@ -1,0 +1,6 @@
+# Ignore raw and processed data
+data_preprocessing/data/
+data_preprocessing/processed/
+
+# Ignore large csv files
+*.csv
