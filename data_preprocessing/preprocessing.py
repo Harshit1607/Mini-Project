@@ -2,34 +2,31 @@ import os
 import pandas as pd
 import numpy as np
 
-# =====================================================
-# PATH SETUP
-# =====================================================
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 OUTPUT_DIR = os.path.join(BASE_DIR, "processed")
 
+
 # =====================================================
-# PROCESS ONE PERSON
+# PROCESS ONE PERSON ONE DAY
 # =====================================================
 
-def process_person(person_folder):
+def process_day(person_folder, day_folder):
 
-    person_path = os.path.join(DATA_DIR, person_folder)
+    day_path = os.path.join(DATA_DIR, person_folder, day_folder)
 
-    accel_path = os.path.join(person_path, "Accelerometer.csv")
-    mic_path = os.path.join(person_path, "Microphone.csv")
+    accel_path = os.path.join(day_path, "Accelerometer.csv")
+    mic_path = os.path.join(day_path, "Microphone.csv")
 
     if not os.path.exists(accel_path):
-        print(f"Missing Accelerometer.csv in {person_folder}")
+        print(f"Missing Accelerometer.csv in {person_folder}/{day_folder}")
         return
 
     if not os.path.exists(mic_path):
-        print(f"Missing Microphone.csv in {person_folder}")
+        print(f"Missing Microphone.csv in {person_folder}/{day_folder}")
         return
 
-    print(f"Processing: {person_folder}")
+    print(f"Processing: {person_folder} - {day_folder}")
 
     # =====================================================
     # 1. LOAD DATA
@@ -126,10 +123,10 @@ def process_person(person_folder):
     ).reset_index()
 
     # =====================================================
-    # 7. SAVE OUTPUT
+    # 7. SAVE OUTPUT (PERSON → DAY)
     # =====================================================
 
-    person_output = os.path.join(OUTPUT_DIR, person_folder)
+    person_output = os.path.join(OUTPUT_DIR, person_folder, day_folder)
     os.makedirs(person_output, exist_ok=True)
 
     merged.to_csv(
@@ -142,7 +139,7 @@ def process_person(person_folder):
         index=False
     )
 
-    print(f"Saved output for {person_folder}")
+    print(f"Saved output for {person_folder}/{day_folder}")
 
 
 # =====================================================
@@ -154,10 +151,19 @@ def process_all():
         raise ValueError("data folder not found")
 
     for person in os.listdir(DATA_DIR):
+
         person_path = os.path.join(DATA_DIR, person)
 
-        if os.path.isdir(person_path):
-            process_person(person)
+        if not os.path.isdir(person_path):
+            continue
+
+        # Loop over days
+        for day in os.listdir(person_path):
+
+            day_path = os.path.join(person_path, day)
+
+            if os.path.isdir(day_path):
+                process_day(person, day)
 
 
 if __name__ == "__main__":
