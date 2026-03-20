@@ -26,6 +26,11 @@ def process_day(person_folder, day_folder):
         print(f"Missing Microphone.csv in {person_folder}/{day_folder}")
         return
 
+    # Check for empty files
+    if os.path.getsize(accel_path) == 0 or os.path.getsize(mic_path) == 0:
+        print(f"Empty Accelerometer/Microphone csv in {person_folder}/{day_folder}")
+        return
+
     print(f"Processing: {person_folder} - {day_folder}")
 
     # =====================================================

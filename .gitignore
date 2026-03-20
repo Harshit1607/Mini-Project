@@ -1,6 +1,16 @@
-# Ignore raw and processed data
+# Environment
+venv/
+.venv/
+env/
+.env/
 data_preprocessing/data/
 data_preprocessing/processed/
 
 # Ignore large csv files
 *.csv
+# Results and outputs
+outputs/
+output/
+
+# Data
+sleep-accel-data/
