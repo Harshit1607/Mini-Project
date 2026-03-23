@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+from scipy import stats
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -44,88 +45,101 @@ def process_day(person_folder, day_folder):
     mic = mic.sort_values("seconds_elapsed").reset_index(drop=True)
 
     # =====================================================
-    # 2. ACCELEROMETER PREPROCESSING
+    # 2. ACCELEROMETER RAW MAGNITUDE
     # =====================================================
 
-    acc["magnitude"] = np.sqrt(
-        acc["x"]**2 +
-        acc["y"]**2 +
-        acc["z"]**2
-    )
-
-    acc["baseline"] = acc["magnitude"].rolling(
-        window=200,
-        center=True,
-        min_periods=1
-    ).median()
-
-    acc["movement_energy"] = acc["magnitude"] - acc["baseline"]
-
-    acc["movement_energy_norm"] = (
-        acc["movement_energy"] - acc["movement_energy"].mean()
-    ) / acc["movement_energy"].std()
+    acc["magnitude"] = np.sqrt(acc["x"]**2 + acc["y"]**2 + acc["z"]**2)
 
     # =====================================================
-    # 3. MICROPHONE PREPROCESSING
+    # 3. MICROPHONE ENERGY
     # =====================================================
 
+    # Use the same audio energy metric as before
     mic["audio_energy"] = -mic["dBFS"]
 
-    mic["audio_energy_norm"] = (
-        mic["audio_energy"] - mic["audio_energy"].mean()
-    ) / mic["audio_energy"].std()
-
     # =====================================================
-    # 4. RESAMPLE TO COMMON TIME GRID
+    # 4. RESAMPLE TO COMMON TIME GRID (10Hz)
     # =====================================================
 
-    start_time = max(acc["seconds_elapsed"].min(),
-                     mic["seconds_elapsed"].min())
-
-    end_time = min(acc["seconds_elapsed"].max(),
-                   mic["seconds_elapsed"].max())
-
+    start_time = max(acc["seconds_elapsed"].min(), mic["seconds_elapsed"].min())
+    end_time = min(acc["seconds_elapsed"].max(), mic["seconds_elapsed"].max())
     common_time = np.arange(start_time, end_time, 0.1)
 
-    acc_interp = np.interp(
-        common_time,
-        acc["seconds_elapsed"],
-        acc["movement_energy_norm"]
-    )
-
-    mic_interp = np.interp(
-        common_time,
-        mic["seconds_elapsed"],
-        mic["audio_energy_norm"]
-    )
+    # We need to interpolate X, Y, Z, and Audio Energy for synchronicity
+    x_interp = np.interp(common_time, acc["seconds_elapsed"], acc["x"])
+    y_interp = np.interp(common_time, acc["seconds_elapsed"], acc["y"])
+    z_interp = np.interp(common_time, acc["seconds_elapsed"], acc["z"])
+    mag_interp = np.interp(common_time, acc["seconds_elapsed"], acc["magnitude"])
+    mic_interp = np.interp(common_time, mic["seconds_elapsed"], mic["audio_energy"])
 
     merged = pd.DataFrame({
         "seconds_elapsed": common_time,
-        "movement_energy_norm": acc_interp,
-        "audio_energy_norm": mic_interp
+        "x": x_interp,
+        "y": y_interp,
+        "z": z_interp,
+        "magnitude": mag_interp,
+        "audio_energy": mic_interp
     })
 
     # =====================================================
-    # 5. SEGMENT INTO 5-SECOND WINDOWS
+    # 5. SEGMENT INTO 30-SECOND WINDOWS (Sleep Medicine Standard)
     # =====================================================
 
-    window_size = 5
-    merged["window"] = (
-        merged["seconds_elapsed"] // window_size
-    ).astype(int)
+    window_size = 30
+    merged["window"] = (merged["seconds_elapsed"] // window_size).astype(int)
 
     # =====================================================
-    # 6. EXTRACT WINDOW FEATURES
+    # 6. EXTRACT COMPATIBLE FEATURES (25 Accel + 3 Audio)
     # =====================================================
 
-    features = merged.groupby("window").agg(
-        movement_mean=("movement_energy_norm", "mean"),
-        movement_max=("movement_energy_norm", "max"),
-        movement_std=("movement_energy_norm", "std"),
-        audio_mean=("audio_energy_norm", "mean"),
-        audio_max=("audio_energy_norm", "max"),
-        audio_std=("audio_energy_norm", "std")
-    ).reset_index()
+    def extract_features(group):
+        mag = group['magnitude'].values
+        x = group['x'].values
+        y = group['y'].values
+        z = group['z'].values
+        audio = group['audio_energy'].values
+        
+        # 25 Accelerometer features used by RF/XGB/LSTM models
+        f = {}
+        
+        # Magnitude stats (13 features)
+        f['mean_mag'] = np.mean(mag)
+        f['std_mag'] = np.std(mag)
+        f['min_mag'] = np.min(mag)
+        f['max_mag'] = np.max(mag)
+        f['median_mag'] = np.median(mag)
+        f['var_mag'] = np.var(mag)
+        f['range_mag'] = np.max(mag) - np.min(mag)
+        f['q25_mag'] = np.percentile(mag, 25)
+        f['q75_mag'] = np.percentile(mag, 75)
+        f['iqr_mag'] = f['q75_mag'] - f['q25_mag']
+        f['skew_mag'] = stats.skew(mag)
+        f['kurtosis_mag'] = stats.kurtosis(mag)
+        f['energy_mag'] = np.sum(mag**2)
+        
+        # Zero Crossing Rate (1 feature)
+        mag_centered = mag - np.mean(mag)
+        f['zero_crossing_rate'] = np.sum(np.diff(np.sign(mag_centered)) != 0) / len(mag)
+        
+        # Axis stats (9 features)
+        f['mean_x'], f['std_x'], f['range_x'] = np.mean(x), np.std(x), np.max(x) - np.min(x)
+        f['mean_y'], f['std_y'], f['range_y'] = np.mean(y), np.std(y), np.max(y) - np.min(y)
+        f['mean_z'], f['std_z'], f['range_z'] = np.mean(z), np.std(z), np.max(z) - np.min(z)
+        
+        # Movement Intensity (2 features)
+        diff_mag = np.diff(mag)
+        f['mean_diff'] = np.mean(np.abs(diff_mag))
+        f['std_diff'] = np.std(diff_mag)
+        
+        # Additional Audio features (from your original logic)
+        f['audio_mean'] = np.mean(audio)
+        f['audio_max'] = np.max(audio)
+        f['audio_std'] = np.std(audio)
+        
+        return pd.Series(f)
+
+    print(f"Extracting 28 features from {len(merged.groupby('window'))} windows...")
+    features = merged.groupby("window").apply(extract_features).reset_index()
 
     # =====================================================
     # 7. SAVE OUTPUT (PERSON → DAY)

@@ -81,7 +81,7 @@ def plot_day(person, day):
     plt.figure()
 
     plt.plot(mic["seconds_elapsed"], mic["audio_energy"], label="Raw Audio Energy", alpha=0.6)
-    plt.plot(processed["seconds_elapsed"], processed["audio_energy_norm"], label="Processed (Normalized)", alpha=0.8)
+    plt.plot(processed["seconds_elapsed"], processed["audio_energy"], label="Processed Audio", alpha=0.8)
 
     plt.title(f"Microphone: Before vs After ({person}-{day})")
     plt.xlabel("Time (seconds)")
@@ -96,8 +96,8 @@ def plot_day(person, day):
     # ---------------------------
     plt.figure()
 
-    plt.plot(processed["seconds_elapsed"], processed["movement_energy_norm"], label="Movement")
-    plt.plot(processed["seconds_elapsed"], processed["audio_energy_norm"], label="Audio")
+    plt.plot(processed["seconds_elapsed"], processed["magnitude"], label="Movement")
+    plt.plot(processed["seconds_elapsed"], processed["audio_energy"], label="Audio")
 
     plt.title(f"Combined Signals ({person}-{day})")
     plt.xlabel("Time (seconds)")
