@@ -373,91 +373,48 @@ class SleepStageClassifierCNNLSTM:
         
         return predictions_original_format
 
-    def plot_results(self, y_test, predictions):
-        print("\nGenerating visualizations...")
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    def save_confusion_matrix(self, y_test, predictions):
+        print("\nSaving confusion matrix...")
+        plt.figure(figsize=(10, 8))
         
         unique_stages = sorted(np.unique(y_test))
         stage_names = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in unique_stages]
         cm = confusion_matrix(y_test, predictions, labels=unique_stages)
         
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
-                    xticklabels=stage_names, yticklabels=stage_names,
-                    ax=axes[0, 0])
-        axes[0, 0].set_title('Confusion Matrix (CNN-LSTM)', fontsize=14, fontweight='bold')
-        axes[0, 0].set_ylabel('True Label', fontsize=12)
-        axes[0, 0].set_xlabel('Predicted Label', fontsize=12)
+                    xticklabels=stage_names, yticklabels=stage_names)
+        plt.title('CNN-LSTM - Confusion Matrix', fontsize=14, fontweight='bold')
+        plt.ylabel('True Label', fontsize=12)
+        plt.xlabel('Predicted Label', fontsize=12)
         
-        if self.history:
-            history_df = pd.DataFrame(self.history.history)
-            axes[0, 1].plot(history_df['accuracy'], label='Train Accuracy')
-            axes[0, 1].plot(history_df['val_accuracy'], label='Validation Accuracy')
-            axes[0, 1].set_title('Model Accuracy', fontsize=14, fontweight='bold')
-            axes[0, 1].set_xlabel('Epoch', fontsize=12)
-            axes[0, 1].set_ylabel('Accuracy', fontsize=12)
-            axes[0, 1].legend()
-            axes[0, 1].grid(True, alpha=0.3)
-
-        stage_dist = pd.DataFrame({
-            'True': pd.Series(y_test).value_counts().sort_index(),
-            'Predicted': pd.Series(predictions).value_counts().sort_index()
-        })
-        stage_dist.index = [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') for i in stage_dist.index]
-        stage_dist.plot(kind='bar', ax=axes[1, 0], color=['#3498db', '#e74c3c'])
-        axes[1, 0].set_title('Sleep Stage Distribution', fontsize=14, fontweight='bold')
-        axes[1, 0].set_xlabel('Sleep Stage', fontsize=12)
-        axes[1, 0].set_ylabel('Number of Epochs', fontsize=12)
-        axes[1, 0].legend(['True', 'Predicted'])
-        axes[1, 0].tick_params(axis='x', rotation=45)
-
-        if self.history:
-            history_df = pd.DataFrame(self.history.history)
-            axes[1, 1].plot(history_df['loss'], label='Train Loss')
-            axes[1, 1].plot(history_df['val_loss'], label='Validation Loss')
-            axes[1, 1].set_title('Model Loss', fontsize=14, fontweight='bold')
-            axes[1, 1].set_xlabel('Epoch', fontsize=12)
-            axes[1, 1].set_ylabel('Loss', fontsize=12)
-            axes[1, 1].legend()
-            axes[1, 1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        output_path = os.path.join(self.output_dir, 'sleep_classification_results_cnn_lstm.png')
+        output_path = os.path.join(self.output_dir, 'lstm_confusion_matrix.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        print(f"Plots saved to: {os.path.abspath(output_path)}")
-        
-        return fig
+        plt.close()
+        print(f"Confusion matrix saved to: {os.path.abspath(output_path)}")
         
     def generate_hypnogram_sample(self, predictions, sample_size=500):
         print("\nGenerating sample hypnogram...")
-        
         sample_pred = predictions[:min(sample_size, len(predictions))]
         time_hours = np.arange(len(sample_pred)) * (EPOCH_DURATION / 3600)
         
-        fig, ax = plt.subplots(figsize=(15, 6))
-        
-        ax.plot(time_hours, sample_pred, linewidth=2, color='#2c3e50')
-        ax.fill_between(time_hours, sample_pred, alpha=0.3, color='#3498db')
+        plt.figure(figsize=(15, 6))
+        plt.plot(time_hours, sample_pred, linewidth=2, color='#2c3e50')
+        plt.fill_between(time_hours, sample_pred, alpha=0.3, color='#3498db')
         
         unique_stages_in_sample = sorted(np.unique(sample_pred))
-        ax.set_yticks(unique_stages_in_sample)
-        ax.set_yticklabels([self.sleep_stage_mapping.get(int(i), f'Stage_{i}') 
+        plt.yticks(unique_stages_in_sample, [self.sleep_stage_mapping.get(int(i), f'Stage_{i}') 
                             for i in unique_stages_in_sample])
-        ax.set_xlabel('Time (hours)', fontsize=12, fontweight='bold')
-        ax.set_ylabel('Sleep Stage', fontsize=12, fontweight='bold')
-        ax.set_title('Sample Hypnogram - Sleep Stage Progression (CNN-LSTM)', 
-                     fontsize=14, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.set_xlim([0, time_hours[-1]])
+        plt.xlabel('Time (hours)', fontsize=12, fontweight='bold')
+        plt.ylabel('Sleep Stage', fontsize=12, fontweight='bold')
+        plt.title('CNN-LSTM - Sample Hypnogram', fontsize=14, fontweight='bold')
+        plt.grid(True, alpha=0.3)
+        plt.xlim([0, time_hours[-1]])
         
         plt.tight_layout()
-        
-        output_path = os.path.join(self.output_dir, 'sample_hypnogram_cnn_lstm.png')
+        output_path = os.path.join(self.output_dir, 'lstm_hypnogram.png')
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
         print(f"Hypnogram saved to: {os.path.abspath(output_path)}")
-        
-        return fig
 
 
 def main():
@@ -557,27 +514,13 @@ def main():
     print("\n" + "="*60)
     print("STEP 7: VISUALIZATION")
     print("="*60)
-    
-    classifier.plot_results(y_test_orig, predictions)
+    classifier.save_confusion_matrix(y_test_orig, predictions)
     classifier.generate_hypnogram_sample(predictions)
     
     # STEP 8
     print("\n" + "="*60)
-    print("STEP 8: SAVING PREDICTIONS AND METADATA")
+    print("STEP 8: SAVING MODEL METADATA")
     print("="*60)
-    
-    predictions_file = os.path.join(OUTPUT_DIR, 'predictions_cnn_lstm.npy')
-    np.save(predictions_file, predictions)
-    print(f"✓ Test set predictions saved to: {os.path.abspath(predictions_file)}")
-    
-    predictions_csv = os.path.join(OUTPUT_DIR, 'predictions_cnn_lstm.csv')
-    pd.DataFrame({
-        'epoch': range(len(predictions)),
-        'sleep_stage': predictions,
-        'stage_name': [classifier.sleep_stage_mapping.get(int(s), f'Stage_{s}') 
-                       for s in predictions]
-    }).to_csv(predictions_csv, index=False)
-    print(f"✓ Human-readable test set predictions saved to: {os.path.abspath(predictions_csv)}")
     
     # NEW: Save model metadata for analyzer
     metadata = {
@@ -601,6 +544,8 @@ def main():
     print(f"  📦 Model: {os.path.join(OUTPUT_DIR, 'lstm_sleep_model.h5')}")
     print(f"  📊 Scaler: {os.path.join(OUTPUT_DIR, 'lstm_scaler.joblib')}")
     print(f"  📄 Metadata: {os.path.join(OUTPUT_DIR, 'lstm_metadata.json')}")
+    print(f"  🖼 Confusion Matrix: {os.path.join(OUTPUT_DIR, 'lstm_confusion_matrix.png')}")
+    print(f"  🖼 Hypnogram: {os.path.join(OUTPUT_DIR, 'lstm_hypnogram.png')}")
     print("\nNext Steps:")
     print("  1. Ensure RF and XGBoost models are trained")
     print("  2. Run unified_analyzer.py to analyze all subjects with all models")

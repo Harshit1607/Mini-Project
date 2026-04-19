@@ -1,16 +1,26 @@
-# Environment
+# Data and Processing
+data_preprocessing/data/
+data_preprocessing/processed_custom/
+data_preprocessing/processed_physionet/
+data_preprocessing/processed/
+sleep-accel-data/
+
+# Models and Inference Outputs
+server/outputs/
+outputs/
+output/
+client/src/data/
+
+# Ignore large csv files
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 venv/
 .venv/
 env/
 .env/
-data_preprocessing/data/
-data_preprocessing/processed/
+.pytest_cache/
 
-# Ignore large csv files
-*.csv
-# Results and outputs
-outputs/
-output/
-
-# Data
-sleep-accel-data/
