@@ -31,13 +31,13 @@ MODELS_DIR = os.path.join(BASE_DIR, 'outputs')
 CUSTOM_DATA_DIR = os.path.join(os.path.dirname(BASE_DIR), 'data_preprocessing', 'processed_custom')
 OUTPUT_DIR = os.path.join(os.path.dirname(BASE_DIR), 'client', 'src', 'data')
 
-class SleepParalysisRiskAnalyzer:
-    """Analyzes sleep patterns for risk factors based on constants.py weights"""
+class ParasomniaAnalyzer:
+    """Analyzes sleep patterns for risk factors (Sleep Paralysis and Night Terrors)"""
     
     def __init__(self):
         self.weights = RISK_WEIGHTS
         
-    def analyze_hypnogram(self, sleep_stages):
+    def analyze_night(self, sleep_stages, features_df):
         stages = np.array(sleep_stages)
         total_epochs = len(stages)
         
@@ -57,7 +57,7 @@ class SleepParalysisRiskAnalyzer:
         duration_hours = total_epochs * EPOCH_SECONDS / 3600
         transition_rate = transitions / duration_hours if duration_hours > 0 else 0
         
-        # REM fragmentation (number of distinct REM periods)
+        # REM fragmentation
         rem_periods = 0
         in_rem = False
         rem_start_idx = -1
@@ -91,38 +91,68 @@ class SleepParalysisRiskAnalyzer:
                 elif s != 0:
                     in_wake = False
         
-        # Calculate risk score
+        # --- PARASOMNIA RISK SCORING ---
         risk_score = 0
         flags = []
         
-        if rem_to_wake >= self.weights['rem_wake_transitions_high']:
+        # 1. Sleep Paralysis Risks (REM-based)
+        if rem_to_wake >= self.weights.get('rem_wake_transitions_high', 8):
             risk_score += 35
-            flags.append("High REM-to-Wake Transitions")
-        elif rem_to_wake >= self.weights['rem_wake_transitions_moderate']:
+            flags.append("High REM-to-Wake Transitions (Sleep Paralysis Risk)")
+        elif rem_to_wake >= self.weights.get('rem_wake_transitions_moderate', 5):
             risk_score += 20
             flags.append("Moderate REM-to-Wake Transitions")
             
-        if rem_periods >= self.weights['rem_fragmentation_high']:
+        if rem_periods >= self.weights.get('rem_fragmentation_high', 12):
             risk_score += 25
             flags.append("High REM Fragmentation")
-        elif rem_periods >= self.weights['rem_fragmentation_moderate']:
-            risk_score += 15
-            flags.append("Moderate REM Fragmentation")
             
-        if awakenings >= self.weights['total_awakenings_high']:
+        if awakenings >= self.weights.get('total_awakenings_high', 20):
             risk_score += 15
             flags.append("High Sleep Fragmentation")
             
-        if rem_pct < self.weights['rem_percentage_low']:
-            risk_score += 10
-            flags.append("Low REM Percentage")
-        elif rem_pct > self.weights['rem_percentage_high']:
-            risk_score += 10
-            flags.append("High REM Percentage")
+        # 2. Night Terror Detection (Advanced Context-Aware Rules)
+        # Night terrors have specific clinical signatures:
+        # - Occur during N2/N3, never REM
+        # - Accompanied by vocalization + sudden movement
+        # - Followed by return to sleep (not full waking)
+        night_terror_events = 0
+        in_terror_episode = False
+        
+        for i in range(total_epochs):
+            # 1. Signature: Sudden vocalization and movement
+            audio_spike = features_df.iloc[i]['audio_max'] > 0.7
+            movement_spike = features_df.iloc[i]['range_mag'] > 0.5
             
-        if transition_rate >= self.weights['stage_transition_rate_high']:
-            risk_score += 10
-            flags.append("High Stage Transition Rate")
+            if audio_spike and movement_spike:
+                # 2. Signature: Occurs from deep NREM sleep (N2 or N3)
+                # Look back up to 10 epochs (5 minutes)
+                lookback = max(0, i - 10)
+                prior_stages = stages[lookback:i]
+                
+                has_nrem_context = any(s in [2, 3] for s in prior_stages)
+                has_rem_context = any(s == 4 for s in prior_stages) # Should NOT have REM
+                
+                # 3. Signature: Returns to sleep afterwards
+                # Look ahead up to 10 epochs (5 minutes)
+                lookahead = min(total_epochs, i + 10)
+                subsequent_stages = stages[i+1:lookahead]
+                
+                returns_to_sleep = any(s != 0 for s in subsequent_stages) if len(subsequent_stages) > 0 else False
+                
+                # If all criteria are met, flag the event
+                if has_nrem_context and not has_rem_context and returns_to_sleep:
+                    if not in_terror_episode:
+                        night_terror_events += 1
+                        in_terror_episode = True
+                else:
+                    in_terror_episode = False
+            else:
+                in_terror_episode = False
+                
+        if night_terror_events > 0:
+            risk_score += 40
+            flags.append(f"DETECTED {night_terror_events} POTENTIAL NIGHT TERROR EVENT(S)")
             
         # Risk level categorization
         if risk_score >= 70:
@@ -134,7 +164,6 @@ class SleepParalysisRiskAnalyzer:
         else:
             risk_level = 'LOW'
             
-        # Per stage percentages
         percentages = {STAGE_LABELS.get(k, f"Stage_{k}"): (v / total_epochs * 100) for k, v in stage_counts.items()}
             
         return {
@@ -146,7 +175,7 @@ class SleepParalysisRiskAnalyzer:
                 'rem_fragmentation': rem_periods,
                 'rem_pct': rem_pct,
                 'sleep_efficiency': sleep_efficiency,
-                'transition_rate': transition_rate
+                'night_terror_events': night_terror_events
             },
             'stage_percentages': percentages
         }
@@ -156,7 +185,7 @@ class SomnusAnalyzer:
     def __init__(self):
         self.manifest = None
         self.models = {}
-        self.risk_analyzer = SleepParalysisRiskAnalyzer()
+        self.risk_analyzer = ParasomniaAnalyzer()
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         self.load_resources()
         
@@ -230,8 +259,8 @@ class SomnusAnalyzer:
             else:
                 preds = components['model'].predict(X_scaled)
                 
-            # Run Risk Analyzer
-            risk_report = self.risk_analyzer.analyze_hypnogram(preds)
+            # Run Risk Analyzer (passing df for raw audio/movement features)
+            risk_report = self.risk_analyzer.analyze_night(preds, df)
             results[model_name] = risk_report
             
             print(f"     Risk Score: {risk_report['risk_score']} | Category: {risk_report['risk_level']}")
